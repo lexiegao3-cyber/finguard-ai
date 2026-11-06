@@ -1,107 +1,76 @@
 # FinGuard AI
 
-A financial disclosure research web application associated with the Wharton Forensic Analytics Lab project.
+Forensic screening for financial disclosures, built for the Wharton Forensic Analytics Lab project.
+Paste a ledger column or two years of MD&A text; FinGuard runs statistical tests, explains what it
+found, and keeps an auditable, versioned history of every run per user.
 
-**Status:** deployed portfolio MVP. The feature list below describes the current implementation; planned capabilities are listed separately.
+![Benford test](docs/benford.png)
+![MD&A comparison](docs/mdna-diff.png)
 
-## Features
+## What it does
 
-- Calculate Benford first-digit distributions and mean absolute deviation (MAD).
-- Compare observed digit frequencies with the theoretical Benford distribution.
-- Validate sample size and exclude zero values from digit analysis.
-- Compare MD&A excerpts using exact paragraph matching and Added / Deleted / Matched labels.
-- Save authenticated, user-specific analysis history with a method-version identifier.
-- Reopen saved results and export analysis history as JSON.
-
-## Technology stack
-
-| Layer | Technology |
+| Analysis | Method |
 | --- | --- |
-| User interface | React 19, TypeScript, CSS |
-| Application framework | Vinext with Next.js-compatible app routes |
-| Server runtime | Cloudflare Workers |
-| Persistence | Cloudflare D1 / SQLite; Drizzle schema migrations |
-| Identity | Sites-provided Sign in with ChatGPT |
-| Development | Node.js 22.13 or later, npm, TypeScript |
+| **Benford's Law** (first digit / first two digits) | MAD with Nigrini's conformity bands, Pearson χ² with an exact p-value (incomplete-gamma implementation, no SciPy), per-digit z-statistics with continuity correction |
+| **Numerical anomaly screen** | Robust modified z-score outliers (median / MAD), repeated amounts, round-number bias, χ² test of last-digit uniformity |
+| **MD&A comparison** | Multiset exact matching (correct with duplicate paragraphs) → greedy fuzzy pairing on token similarity → Added / Deleted / Modified / Matched, with word-level diffs and changed figures (e.g. `12% → 7%`, `$4.1B → $4.4B`) |
 
-Node.js is used for development and testing. The deployed server runs in Cloudflare Workers, not an Express server.
+Financial text parsing understands `1,234.56`, accounting negatives `(2,000)`, `$4.1 billion`, `3.2M`,
+and skips percentages and bare years where they would bias a digit test.
 
 ## Architecture
 
-```text
-React interface -> /api/data -> authenticated server handlers -> Cloudflare D1
+```
+frontend/  React 19 + TypeScript + Vite + Recharts
+   │  REST/JSON, Bearer JWT
+backend/   FastAPI
+   ├── routers/      auth, analyses (CRUD, versions, export, pagination/search)
+   ├── schemas.py    Pydantic contracts; discriminated union per analysis kind
+   ├── services.py   runs analyses, fingerprints input, appends versions
+   ├── models.py     SQLAlchemy 2.0: users → analyses → analysis_versions
+   └── analytics/    pure-Python core (benford, anomalies, mdna_diff, parsing, stats)
 ```
 
-The server derives user identity from trusted platform-provided authentication headers rather than a client-supplied user ID. Records use parameterized SQL. User-owned writes are scoped to the signed-in user.
+**Versioned records.** Every run is an immutable `analysis_versions` row holding the method version,
+SHA-256 of the canonical input, parameters and full result. Re-running with identical input and the
+same method version is idempotent (returns the existing version); new data appends `v2`, `v3`, ….
+
+**Security.** bcrypt password hashing, short-lived HS256 JWTs, every query scoped to the
+authenticated owner (other users' ids return 404, not 403), constant-time-ish login for unknown
+emails, input size limits enforced at the schema layer.
 
 ## Run locally
 
-Prerequisites: Node.js 22.13+ and npm.
+```bash
+# backend
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+uvicorn app.main:create_app --factory --reload        # http://localhost:8000/docs
 
-```sh
-git clone https://github.com/lexiegao3-cyber/finguard-ai.git
-cd finguard-ai
-npm ci
-npm run build
-npm run db:migrate:local
-npm run dev
+# frontend (new terminal)
+cd frontend
+npm install
+npm run dev                                           # http://localhost:5173 (proxies /api)
 ```
 
-Open the local URL printed by the development server, then use **Sign in with ChatGPT**. The portable development profile simulates a local test identity; it is not a production authentication system. The generated build configuration is required by the database migration command.
+Configuration (environment variables): `FINGUARD_DATABASE_URL` (default SQLite; any SQLAlchemy URL
+such as PostgreSQL works), `FINGUARD_JWT_SECRET` (required when `FINGUARD_ENV=production`),
+`FINGUARD_JWT_TTL_MINUTES`, `FINGUARD_CORS_ORIGINS`.
 
-Local data is stored under the ignored `.wrangler/` directory. Do not commit databases, credentials, or local environment files.
+## Tests
 
-## Verification
-
-```sh
-npm run typecheck
-npm test
-npm run build
+```bash
+cd backend && pytest -q
 ```
 
-Type checking and builds passed for the original MVP. Browser checks covered authenticated database-backed interactions. This is not a security audit or load-test certification.
-
-## API
-
-- `GET /api/data`: load application records for the current interface and identity.
-- `POST /api/data`: submit a validated application action.
-
-Handlers live in `app/api/data/route.ts`. Business logic, where separated, lives in `app/rank.mjs` or `app/analysis.mjs`. API error responses use an `error` field.
-
-## Repository structure
-
-```text
-app/                 React pages, application logic, and API handlers
-db/schema.ts         Database schema
-drizzle/             Versioned SQL migrations
-scripts/             Framework and local runtime helpers
-worker/              Production Worker entry point
-.openai/hosting.json Hosting binding declarations, without an existing Site ID
-```
-
-## Deployment
-
-The existing MVP is hosted privately through Sites; its URL requires owner access and is not an anonymous public demo. A GitHub upload does not deploy this application or grant access to that private Site.
-
-To deploy a new instance, register a new Site, retain the declared D1 binding, build the application, and publish using the Sites workflow. `.openai/hosting.json` intentionally omits the original project's Site ID. Deploying outside Sites requires replacing its authentication integration and configuring the hosting bindings.
+19 tests: χ² p-values against reference tables, float-safe leading-digit extraction, conforming vs.
+uniform data, outlier/duplicate/round-number detection, MD&A duplicate-paragraph semantics and
+changed-figure extraction, plus API tests for auth, validation errors, per-user isolation, pagination,
+export, and idempotent versioning. CI runs backend tests and the frontend type-check/build.
 
 ## Limitations
 
-This is an early research MVP, not the complete research platform. It accepts user-provided numbers and text; it does not fetch or verify SEC filings. The prefilled numbers are synthetic. Benford deviation is a descriptive statistic, not a fraud probability or finding. Exact paragraph comparison does not perform semantic matching. No trained fraud model, SHAP explanation, or historical backtest is active.
-
-## Research roadmap
-
-The planned platform covers four methodological layers:
-
-1. **Statistical and financial baselines:** Benford statistics, Beneish ratios, and logistic regression. Only Benford MAD is implemented in this MVP.
-2. **Tree ensembles:** XGBoost / LightGBM and SHAP explanations. Planned.
-3. **Unsupervised screening:** Isolation Forest. Planned.
-4. **Financial NLP:** Transformer paragraph embeddings, ParaEmb / FraudW2V-inspired change features, and fusion with structured features. Planned.
-
-Further engineering work includes SEC EDGAR ingestion, AAER label provenance, PostgreSQL and Python/FastAPI services, MLflow tracking, filing citations, as-of rolling backtests, PR-AUC and Precision@K evaluation, and grouped confidence intervals. These are targets rather than completed functionality.
-
-The current repository does not reproduce the referenced research baselines or incorporate their source code. Research references: [Benford baseline](https://github.com/bachnguyennn/Benford-Law-Fraud-Detection) and [ParaEmb / FraudW2V reference](https://github.com/LittelStudent/Financial-Statement-Fraud-Detection-ParaEmb-FraudW2V).
-
-## Attribution
-
-The application uses the Sites Vinext starter and third-party dependencies. Vendored components retain their bundled license notices, including the notices under `vendor/` and `scripts/vite/`. No competition awards, adoption statistics, or performance claims are borrowed from another applicant's projects.
+Results are descriptive screens, not fraud determinations. Benford analysis is only meaningful for
+data spanning several orders of magnitude and not bounded by assigned ranges. The MD&A matcher works
+at paragraph granularity, so a paragraph split into two shows as one Modified plus one Added.
