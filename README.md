@@ -4,8 +4,19 @@ Forensic screening for financial disclosures, built for the Wharton Forensic Ana
 Paste a ledger column or two years of MD&A text; FinGuard runs statistical tests, explains what it
 found, and keeps an auditable, versioned history of every run per user.
 
+![Landing](docs/landing.png)
 ![Benford test](docs/benford.png)
 ![MD&A comparison](docs/mdna-diff.png)
+
+## Interface
+
+The design borrows from an auditor's working paper: green-bar ledger stock, ink for observed data, a blue
+pencil line for Benford's expectation and red-pencil rings around exceptions. The landing chart starts every
+digit at a flat one-in-nine share, the way invented numbers tend to look, and settles into Benford's curve.
+On a result, observed columns rise, the expectation is drawn in, and only the digits that deviate at the 5%
+level get circled. The chart is a hand-built SVG (hover or tab through digits for exact values); figures count
+up once per result. Animation uses Motion for React and honours reduced-motion settings. Type is Archivo
+(SIL OFL), with its narrow width for numbers.
 
 ## What it does
 
@@ -21,7 +32,7 @@ and skips percentages and bare years where they would bias a digit test.
 ## Architecture
 
 ```
-frontend/  React 19 + TypeScript + Vite + Recharts
+frontend/  React 19 + TypeScript + Vite + Motion, custom SVG charts
    │  REST/JSON, Bearer JWT
 backend/   FastAPI
    ├── routers/      auth, analyses (CRUD, versions, export, pagination/search)

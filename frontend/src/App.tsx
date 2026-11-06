@@ -1,7 +1,9 @@
+import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, tokenStore } from "./api";
 import { AnomalyView } from "./components/AnomalyView";
 import { BenfordView } from "./components/BenfordView";
+import { BENFORD_FIRST, DigitChart } from "./components/DigitChart";
 import { DiffView } from "./components/DiffView";
 import type { Analysis, AnomalyResult, BenfordResult, DiffResult, Kind, ListItem, Params, Version } from "./types";
 
@@ -20,16 +22,22 @@ export default function App() {
     api.me().then((u) => setEmail(u.email)).catch(() => setEmail(null)).finally(() => setChecking(false));
   }, []);
 
-  if (checking) return <div className="center">Loading…</div>;
-  if (!email) return <AuthScreen onAuthed={setEmail} />;
   return (
-    <Workspace
-      email={email}
-      onLogout={() => {
-        tokenStore.set(null);
-        setEmail(null);
-      }}
-    />
+    <MotionConfig reducedMotion="user">
+      {checking ? (
+        <div className="center">Opening your workpapers</div>
+      ) : !email ? (
+        <AuthScreen onAuthed={setEmail} />
+      ) : (
+        <Workspace
+          email={email}
+          onLogout={() => {
+            tokenStore.set(null);
+            setEmail(null);
+          }}
+        />
+      )}
+    </MotionConfig>
   );
 }
 
@@ -55,17 +63,34 @@ function AuthScreen({ onAuthed }: { onAuthed: (email: string) => void }) {
   }
 
   return (
-    <form className="auth" onSubmit={submit}>
-      <h1>FinGuard AI</h1>
-      <p className="muted">Forensic screening for financial disclosures</p>
-      <label>Email<input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></label>
-      <label>Password<input type="password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} /></label>
-      {error && <p className="error">{error}</p>}
-      <button disabled={busy}>{mode === "login" ? "Sign in" : "Create account"}</button>
-      <button type="button" className="link" onClick={() => setMode(mode === "login" ? "register" : "login")}>
-        {mode === "login" ? "Need an account? Register" : "Have an account? Sign in"}
-      </button>
-    </form>
+    <div className="landing">
+      <section className="pitch">
+        <p className="wordmark">FinGuard</p>
+        <h1>Do these numbers look like they happened naturally?</h1>
+        <p className="lede">
+          In real ledgers, about 30% of amounts start with a 1 and fewer than 5% start with a 9. Invented figures
+          rarely follow that pattern. FinGuard tests your data against it, screens for outliers and suspicious
+          repeats, and shows exactly what changed between two years of MD&amp;A.
+        </p>
+        <DigitChart
+          label="Benford's Law: expected share of each leading digit"
+          from="uniform"
+          delay={0.3}
+          height={300}
+          data={BENFORD_FIRST.map((p, i) => ({ digit: i + 1, observed: p, expected: p }))}
+        />
+      </section>
+      <form className="auth" onSubmit={submit}>
+        <h2>{mode === "login" ? "Sign in to your workpapers" : "Create an account"}</h2>
+        <label>Email<input type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></label>
+        <label>Password<input type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+        {error && <p className="error" role="alert">{error}</p>}
+        <button className="primary" disabled={busy}>{mode === "login" ? "Sign in" : "Create account"}</button>
+        <button type="button" className="link" onClick={() => setMode(mode === "login" ? "register" : "login")}>
+          {mode === "login" ? "New to FinGuard? Create an account" : "Already registered? Sign in"}
+        </button>
+      </form>
+    </div>
   );
 }
 
@@ -111,8 +136,8 @@ function Workspace({ email, onLogout }: { email: string; onLogout: () => void })
     <div className="layout">
       <aside>
         <div className="aside-head">
-          <strong>History</strong>
-          <button className="link" onClick={() => { setSelected(null); setShown(null); }}>+ New</button>
+          <strong>Workpapers</strong>
+          <button className="link" onClick={() => { setSelected(null); setShown(null); }}>New analysis</button>
         </div>
         <input placeholder="Search titles" value={query} onChange={(e) => setQuery(e.target.value)} />
         <select value={filter} onChange={(e) => setFilter(e.target.value as Kind | "")}>
@@ -123,7 +148,7 @@ function Workspace({ email, onLogout }: { email: string; onLogout: () => void })
           {items.map((it) => (
             <li key={it.id} className={selected?.id === it.id ? "active" : ""} onClick={() => open(it.id)}>
               <span>{it.title}</span>
-              <small>{KIND_LABEL[it.kind]} · v{it.latest_version} · {new Date(it.updated_at).toLocaleDateString()}</small>
+              <small>{KIND_LABEL[it.kind]}, version {it.latest_version}, {new Date(it.updated_at).toLocaleDateString()}</small>
             </li>
           ))}
           {items.length === 0 && <li className="empty">No saved analyses</li>}
@@ -137,7 +162,9 @@ function Workspace({ email, onLogout }: { email: string; onLogout: () => void })
 
       <main>
         {error && <p className="error">{error}</p>}
+        <AnimatePresence mode="wait">
         {selected && shown ? (
+          <motion.div key={`a-${selected.id}-v${shown.version}`} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
           <AnalysisDetail
             analysis={selected}
             version={shown}
@@ -154,7 +181,9 @@ function Workspace({ email, onLogout }: { email: string; onLogout: () => void })
               await refresh();
             }}
           />
+          </motion.div>
         ) : (
+          <motion.div key="new" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
           <NewAnalysis
             onCreated={async (a) => {
               setSelected(a);
@@ -162,7 +191,9 @@ function Workspace({ email, onLogout }: { email: string; onLogout: () => void })
               await refresh();
             }}
           />
+          </motion.div>
         )}
+        </AnimatePresence>
       </main>
     </div>
   );
@@ -207,8 +238,8 @@ function ParamsForm({ kind, onSubmit, submitLabel }: { kind: Kind; onSubmit: (p:
         </div>
       ) : (
         <label>
-          Amounts — paste a ledger column, CSV or report text
-          <textarea required rows={8} value={text} onChange={(e) => setText(e.target.value)} placeholder="1,204.55&#10;(3,120.00)&#10;$4.1 million …" />
+          Paste amounts: a ledger column, CSV rows or report text
+          <textarea required rows={8} value={text} onChange={(e) => setText(e.target.value)} placeholder={"1,204.55\n(3,120.00)\n$4.1 million"} />
         </label>
       )}
       <div className="row">
@@ -221,16 +252,16 @@ function ParamsForm({ kind, onSubmit, submitLabel }: { kind: Kind; onSubmit: (p:
           </label>
         )}
         {kind === "anomalies" && (
-          <label>Outlier threshold |z| &gt;
+          <label>Flag values with |modified z| above
             <input type="number" min={2} max={10} step={0.5} value={z} onChange={(e) => setZ(Number(e.target.value))} />
           </label>
         )}
         {kind === "mdna_diff" && (
-          <label>"Modified" similarity ≥
+          <label>Treat paragraphs as reworded above this similarity
             <input type="number" min={0.3} max={0.95} step={0.05} value={sim} onChange={(e) => setSim(Number(e.target.value))} />
           </label>
         )}
-        <button disabled={busy}>{busy ? "Running…" : submitLabel}</button>
+        <button className="primary" disabled={busy}>{busy ? "Running" : submitLabel}</button>
       </div>
       {error && <p className="error">{error}</p>}
     </form>
@@ -242,7 +273,7 @@ function NewAnalysis({ onCreated }: { onCreated: (a: Analysis) => Promise<void> 
   const [title, setTitle] = useState("");
   return (
     <section>
-      <h2>New analysis</h2>
+      <h2>Start an analysis</h2>
       <div className="tabs">
         {(Object.keys(KIND_LABEL) as Kind[]).map((k) => (
           <button key={k} className={k === kind ? "tab on" : "tab"} onClick={() => setKind(k)}>{KIND_LABEL[k]}</button>
@@ -274,16 +305,16 @@ function AnalysisDetail(props: {
         <div>
           <h2>{analysis.title}</h2>
           <p className="muted">
-            {KIND_LABEL[analysis.kind]} · method {version.method_version} · input {version.input_sha256.slice(0, 10)}…
+            {KIND_LABEL[analysis.kind]} run with {version.method_version}. Input fingerprint {version.input_sha256.slice(0, 10)}.
           </p>
         </div>
         <div className="row">
           <select value={version.version} onChange={(e) => props.onPickVersion(Number(e.target.value))}>
             {analysis.versions.map((v) => (
-              <option key={v.version} value={v.version}>v{v.version} · {new Date(v.created_at).toLocaleString()}</option>
+              <option key={v.version} value={v.version}>Version {v.version}, {new Date(v.created_at).toLocaleString()}</option>
             ))}
           </select>
-          <button onClick={() => setRerunOpen(!rerunOpen)}>New version</button>
+          <button className="primary" onClick={() => setRerunOpen(!rerunOpen)}>Run with new data</button>
           <button className="danger" onClick={() => confirm("Delete this analysis and all versions?") && props.onDelete()}>Delete</button>
         </div>
       </div>
