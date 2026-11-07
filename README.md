@@ -69,6 +69,26 @@ Configuration (environment variables): `FINGUARD_DATABASE_URL` (default SQLite; 
 such as PostgreSQL works), `FINGUARD_JWT_SECRET` (required when `FINGUARD_ENV=production`),
 `FINGUARD_JWT_TTL_MINUTES`, `FINGUARD_CORS_ORIGINS`.
 
+## Performance
+
+The analytics core is pure Python with no NumPy or SciPy dependency. Reproduce the numbers with a fixed-seed
+benchmark (median of three runs, data generation excluded):
+
+```bash
+cd backend && python -m benchmarks.bench_analytics --sizes 100000 1000000 --repeat 3
+```
+
+Reference run, Python 3.13 on a single x86_64 core:
+
+| Case | Input | Time | Throughput |
+| --- | --- | --- | --- |
+| Benford first-digit test | 1,000,000 amounts | 0.85 s | 1.18 M values/s |
+| Benford first-two-digit test | 1,000,000 amounts | 0.79 s | 1.26 M values/s |
+| Anomaly screen (all four screens) | 1,000,000 amounts | 1.65 s | 0.61 M values/s |
+| MD&A comparison | 300 vs 300 paragraphs | 0.17 s | |
+
+Results vary by machine; run the script locally before quoting figures.
+
 ## Tests
 
 ```bash
